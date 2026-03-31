@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openshelf-v10';
+const CACHE_NAME = 'openshelf-v11';
 const CDN_CACHE = 'openshelf-cdn-v1';
 
 const STATIC_ASSETS = [

@@ -1,6 +1,7 @@
 /**
  * OpenShelf TTS Web Worker
  * Runs Kokoro ONNX inference off the main thread so the browser never freezes.
+ * Uses tts.stream() for efficient chunked generation of longer text.
  * Sends raw Float32 PCM samples back — no WAV encoding overhead.
  */
 
@@ -92,6 +93,33 @@ async function handleInit({ dtype }, id) {
   }
 }
 
+/**
+ * Extract raw PCM Float32 samples from a kokoro-js audio result.
+ * Returns { samples: Float32Array, sampleRate: number } or null.
+ */
+function extractSamples(audio) {
+  const sampleRate = audio.sampling_rate || 24000;
+  let samples = null;
+
+  if (audio.audio instanceof Float32Array) {
+    samples = audio.audio;
+  } else if (audio.audio && typeof audio.audio === 'object' && audio.audio.data instanceof Float32Array) {
+    samples = audio.audio.data;
+  } else if (typeof audio.toFloat32Array === 'function') {
+    samples = audio.toFloat32Array();
+  } else if (audio.data instanceof Float32Array) {
+    samples = audio.data;
+  } else if (audio.audio && ArrayBuffer.isView(audio.audio)) {
+    const rawData = audio.audio;
+    samples = new Float32Array(rawData.buffer, rawData.byteOffset, rawData.byteLength / 4);
+  }
+
+  if (samples && samples.length > 0) {
+    return { samples, sampleRate };
+  }
+  return null;
+}
+
 async function handleGenerate({ text, voice }, id) {
   if (!tts) {
     self.postMessage({
@@ -104,57 +132,64 @@ async function handleGenerate({ text, voice }, id) {
 
   try {
     const v = voice || currentVoice;
-    const audio = await tts.generate(text, { voice: v });
 
-    // Extract raw PCM Float32 samples and sample rate
-    const sampleRate = audio.sampling_rate || 24000;
-    let samples = null;
+    // Use tts.stream() for efficient chunked generation if available.
+    // This lets kokoro-js handle optimal internal text splitting, and we get
+    // audio chunks as they're generated rather than waiting for the full text.
+    if (typeof tts.stream === 'function') {
+      const stream = tts.stream(text, { voice: v });
+      const allSamples = [];
+      let sampleRate = 24000;
 
-    // Try all known paths to get Float32Array samples
-    if (audio.audio instanceof Float32Array) {
-      samples = audio.audio;
-    } else if (audio.audio && typeof audio.audio === 'object' && audio.audio.data instanceof Float32Array) {
-      samples = audio.audio.data;
-    } else if (typeof audio.toFloat32Array === 'function') {
-      samples = audio.toFloat32Array();
-    } else if (audio.data instanceof Float32Array) {
-      samples = audio.data;
-    }
+      for await (const chunk of stream) {
+        const audio = chunk.audio || chunk;
+        const result = extractSamples(audio);
+        if (result) {
+          allSamples.push(result.samples);
+          sampleRate = result.sampleRate;
+        }
+      }
 
-    if (samples && samples.length > 0) {
-      // Transfer the Float32Array's underlying buffer (zero-copy)
-      const copy = new Float32Array(samples);
-      self.postMessage(
-        { type: 'audio', payload: { samples: copy, sampleRate }, id },
-        [copy.buffer]
-      );
-      return;
-    }
-
-    // Fallback: try WAV encoding
-    if (typeof audio.toWav === 'function') {
-      const wavData = audio.toWav();
-      const buffer = wavData instanceof ArrayBuffer ? wavData : wavData.buffer.slice(0);
-      self.postMessage(
-        { type: 'audio', payload: { wav: buffer, sampleRate }, id },
-        [buffer]
-      );
-      return;
-    }
-
-    // If we got here, we have audio but can't extract it in a known format
-    // Try to serialize whatever we have
-    if (audio.audio) {
-      const rawData = audio.audio;
-      if (ArrayBuffer.isView(rawData)) {
-        const floats = new Float32Array(rawData.buffer, rawData.byteOffset, rawData.byteLength / 4);
-        const copy = new Float32Array(floats);
+      if (allSamples.length > 0) {
+        // Concatenate all chunks into a single Float32Array
+        const totalLength = allSamples.reduce((sum, s) => sum + s.length, 0);
+        const merged = new Float32Array(totalLength);
+        let offset = 0;
+        for (const chunk of allSamples) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        const copy = new Float32Array(merged);
         self.postMessage(
           { type: 'audio', payload: { samples: copy, sampleRate }, id },
           [copy.buffer]
         );
         return;
       }
+    }
+
+    // Fallback: use tts.generate() for single-shot generation
+    const audio = await tts.generate(text, { voice: v });
+    const result = extractSamples(audio);
+
+    if (result) {
+      const copy = new Float32Array(result.samples);
+      self.postMessage(
+        { type: 'audio', payload: { samples: copy, sampleRate: result.sampleRate }, id },
+        [copy.buffer]
+      );
+      return;
+    }
+
+    // WAV fallback
+    if (typeof audio.toWav === 'function') {
+      const wavData = audio.toWav();
+      const buffer = wavData instanceof ArrayBuffer ? wavData : wavData.buffer.slice(0);
+      self.postMessage(
+        { type: 'audio', payload: { wav: buffer, sampleRate: audio.sampling_rate || 24000 }, id },
+        [buffer]
+      );
+      return;
     }
 
     self.postMessage({

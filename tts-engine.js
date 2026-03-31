@@ -58,8 +58,6 @@ class TTSEngine {
     this._aborted = false;
     this._msgId = 0;
     this._pending = new Map();
-    this._pregenBuffer = null;
-    this._pregenerating = false;
     this._isDownloading = false;  // true if actually downloading model (not cached)
 
     // MediaStream routing for background/lock screen playback
@@ -384,7 +382,37 @@ class TTSEngine {
     });
   }
 
-  // ——— Playback ———
+  // ——— Text Chunking ———
+
+  /**
+   * Batch an array of sentences into larger chunks for more efficient TTS generation.
+   * Kokoro handles ~400-500 chars well in a single inference pass, much faster
+   * than generating individual sentences (which have per-inference overhead).
+   * Each chunk remembers which sentence indices it covers for highlight tracking.
+   */
+  static batchSentences(sentences, maxChunkChars = 400) {
+    const chunks = [];
+    let currentText = '';
+    let startIdx = 0;
+
+    for (let i = 0; i < sentences.length; i++) {
+      const sentence = sentences[i];
+      if (currentText.length > 0 && currentText.length + sentence.length + 1 > maxChunkChars) {
+        // Flush current chunk
+        chunks.push({ text: currentText.trim(), startIdx, endIdx: i - 1 });
+        currentText = sentence;
+        startIdx = i;
+      } else {
+        currentText += (currentText.length > 0 ? ' ' : '') + sentence;
+      }
+    }
+    if (currentText.trim().length > 0) {
+      chunks.push({ text: currentText.trim(), startIdx, endIdx: sentences.length - 1 });
+    }
+    return chunks;
+  }
+
+  // ——— Playback with Pre-generation Queue ———
 
   async playSentences(sentences, startIndex = 0) {
     this.sentences = sentences;
@@ -392,77 +420,120 @@ class TTSEngine {
     this.isPlaying = true;
     this.isPaused = false;
     this._aborted = false;
-    this._pregenBuffer = null;
     this.onStateChange?.('playing');
     this._updateMediaSessionState('playing');
 
-    // Ensure AudioContext is ready (should already be created from user gesture)
+    // Ensure AudioContext is ready
     this.ensureAudioContext();
 
-    await this._playNext();
+    // Batch sentences into larger chunks for efficient generation
+    const allChunks = TTSEngine.batchSentences(sentences);
+    
+    // Find which chunk to start from based on startIndex
+    let startChunkIdx = 0;
+    for (let i = 0; i < allChunks.length; i++) {
+      if (allChunks[i].endIdx >= startIndex) {
+        startChunkIdx = i;
+        break;
+      }
+    }
+
+    // Pre-generation queue: generate upcoming chunks while current one plays
+    this._chunks = allChunks;
+    this._currentChunkIdx = startChunkIdx;
+    this._audioQueue = new Map(); // chunkIdx -> audioData (pre-generated)
+    this._generatingSet = new Set(); // chunk indices currently being generated
+
+    // Kick off pre-generation of first few chunks
+    this._pregenQueue();
+
+    await this._playNextChunk();
   }
 
-  async _playNext() {
+  /**
+   * Pre-generate upcoming chunks (up to 3 ahead) so audio is ready when needed.
+   */
+  _pregenQueue() {
     if (this._aborted || !this.isPlaying) return;
-    if (this.currentSentenceIndex >= this.sentences.length) {
+    const LOOKAHEAD = 3;
+    for (let i = 0; i < LOOKAHEAD; i++) {
+      const idx = this._currentChunkIdx + i;
+      if (idx >= this._chunks.length) break;
+      if (this._audioQueue.has(idx) || this._generatingSet.has(idx)) continue;
+      this._generatingSet.add(idx);
+      this._generateChunk(idx);
+    }
+  }
+
+  async _generateChunk(chunkIdx) {
+    try {
+      const chunk = this._chunks[chunkIdx];
+      if (!chunk) return;
+      const audioData = await this._generateInWorker(chunk.text, this.voice);
+      if (audioData && this.isPlaying && !this._aborted) {
+        this._audioQueue.set(chunkIdx, audioData);
+      }
+    } catch (e) { /* ignore */ }
+    finally {
+      this._generatingSet.delete(chunkIdx);
+    }
+  }
+
+  async _playNextChunk() {
+    if (this._aborted || !this.isPlaying) return;
+    if (this._currentChunkIdx >= this._chunks.length) {
       this.stop();
       this.onComplete?.();
       return;
     }
 
-    const sentence = this.sentences[this.currentSentenceIndex];
-    this.onSentenceStart?.(this.currentSentenceIndex, sentence);
+    const chunk = this._chunks[this._currentChunkIdx];
+
+    // Fire sentence-start callback with the chunk text for display
+    this.onSentenceStart?.(chunk.startIdx, chunk.text);
 
     if (this.usingNativeFallback) {
-      await this._playNative(sentence);
+      await this._playNative(chunk.text);
     } else {
-      await this._playKokoro(sentence);
+      // Wait for this chunk's audio (might already be pre-generated)
+      let audioData = this._audioQueue.get(this._currentChunkIdx);
+      if (!audioData) {
+        // Not yet generated — generate now (first chunk, or queue was slow)
+        if (!this._generatingSet.has(this._currentChunkIdx)) {
+          this._generatingSet.add(this._currentChunkIdx);
+          await this._generateChunk(this._currentChunkIdx);
+        } else {
+          // Wait for in-flight generation to complete
+          while (!this._audioQueue.has(this._currentChunkIdx) && this.isPlaying && !this._aborted) {
+            await new Promise(r => setTimeout(r, 50));
+          }
+        }
+        audioData = this._audioQueue.get(this._currentChunkIdx);
+      }
+
+      if (!audioData || this._aborted || !this.isPlaying) return;
+
+      // Clean up used audio data
+      this._audioQueue.delete(this._currentChunkIdx);
+
+      if (audioData.samples) {
+        await this._playPCM(audioData.samples, audioData.sampleRate);
+      } else if (audioData.wav) {
+        await this._playWAV(audioData.wav);
+      }
     }
 
     if (this._aborted || !this.isPlaying) return;
 
-    this.onSentenceEnd?.(this.currentSentenceIndex);
-    this.currentSentenceIndex++;
+    this.onSentenceEnd?.(chunk.endIdx);
+    this._currentChunkIdx++;
 
-    await new Promise(r => setTimeout(r, 60));
-    await this._playNext();
-  }
+    // Kick off next batch of pre-generation
+    this._pregenQueue();
 
-  async _playKokoro(sentence) {
-    let audioData;
-
-    if (this._pregenBuffer && this._pregenBuffer.index === this.currentSentenceIndex) {
-      audioData = this._pregenBuffer.audioData;
-      this._pregenBuffer = null;
-    } else {
-      audioData = await this._generateInWorker(sentence, this.voice);
-    }
-
-    if (!audioData || this._aborted || !this.isPlaying) return;
-
-    // Start pre-generating the next sentence in background
-    this._pregenNext();
-
-    if (audioData.samples) {
-      await this._playPCM(audioData.samples, audioData.sampleRate);
-    } else if (audioData.wav) {
-      await this._playWAV(audioData.wav);
-    }
-  }
-
-  async _pregenNext() {
-    const nextIndex = this.currentSentenceIndex + 1;
-    if (nextIndex >= this.sentences.length || this._pregenerating) return;
-
-    this._pregenerating = true;
-    try {
-      const nextSentence = this.sentences[nextIndex];
-      const audioData = await this._generateInWorker(nextSentence, this.voice);
-      if (audioData && this.isPlaying && !this._aborted) {
-        this._pregenBuffer = { index: nextIndex, audioData };
-      }
-    } catch (e) { /* ignore */ }
-    finally { this._pregenerating = false; }
+    // Small gap between chunks for natural pacing
+    await new Promise(r => setTimeout(r, 40));
+    await this._playNextChunk();
   }
 
   async _playPCM(samples, sampleRate) {
@@ -608,8 +679,11 @@ class TTSEngine {
     this._aborted = true;
     this.isPlaying = false;
     this.isPaused = false;
-    this._pregenBuffer = null;
     this._pending.clear();
+    // Clear pre-generation queue
+    if (this._audioQueue) this._audioQueue.clear();
+    if (this._generatingSet) this._generatingSet.clear();
+    this._chunks = null;
 
     if (this.usingNativeFallback) {
       window.speechSynthesis?.cancel();
