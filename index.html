@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <title>OpenShelf — EPUB Reader with AI Voice</title>
+  <meta name="description" content="A premium EPUB reader with Kokoro AI text-to-speech. Read your books and listen to them — entirely in your browser.">
+  
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#C17817">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="OpenShelf">
+  <link rel="apple-touch-icon" href="assets/icon-192.svg">
+  
+  <!-- iOS Splash Screens -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  
+  <!-- Open Graph -->
+  <meta property="og:title" content="OpenShelf — EPUB Reader with AI Voice">
+  <meta property="og:description" content="A premium EPUB reader with Kokoro AI text-to-speech. Read and listen — entirely in your browser.">
+  <meta property="og:type" content="website">
+  
+  <link rel="icon" type="image/svg+xml" href="assets/icon-192.svg">
+  
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ===== OFFLINE BANNER ===== -->
+    <div id="offline-banner" class="offline-banner">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="1" y1="1" x2="23" y2="23"/>
+        <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/>
+        <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/>
+        <path d="M10.71 5.05A16 16 0 0 1 22.56 9"/>
+        <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/>
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+        <line x1="12" y1="20" x2="12.01" y2="20"/>
+      </svg>
+      <span>You're offline — your books and reader are still available</span>
+    </div>
+    
+    <!-- ===== LIBRARY SCREEN ===== -->
+    <div id="library-screen" class="screen library-screen active">
+      
+      <!-- Header -->
+      <header class="library-header">
+        <div class="library-logo">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-label="OpenShelf logo">
+            <rect width="32" height="32" rx="7" fill="var(--color-accent)"/>
+            <g transform="translate(16,16)">
+              <path d="M-9 -4 C-9 -4 -4.5 -6 0 -4 C4.5 -6 9 -4 9 -4 L9 5.5 C9 5.5 4.5 3.5 0 5.5 C-4.5 3.5 -9 5.5 -9 5.5 Z" fill="none" stroke="#FFF8F0" stroke-width="1.5" stroke-linejoin="round"/>
+              <line x1="0" y1="-4" x2="0" y2="5.5" stroke="#FFF8F0" stroke-width="1"/>
+            </g>
+          </svg>
+          <span class="library-logo-text">Open<span>Shelf</span></span>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">
+            <!-- Icon set by JS -->
+          </button>
+          <button class="icon-btn" id="settings-btn" aria-label="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="import-btn" aria-label="Import book">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Toolbar -->
+      <div class="library-toolbar">
+        <div class="sort-tabs">
+          <button class="sort-tab active" data-sort="recent">Recent</button>
+          <button class="sort-tab" data-sort="title">Title</button>
+          <button class="sort-tab" data-sort="author">Author</button>
+        </div>
+        <span class="book-count" id="book-count"></span>
+      </div>
+
+      <!-- Book Grid -->
+      <div class="library-content" id="library-content">
+        <!-- Rendered by JS -->
+      </div>
+
+      <input type="file" id="file-input" accept=".epub" class="hidden" aria-hidden="true">
+    </div>
+
+    <!-- ===== READER SCREEN ===== -->
+    <div id="reader-screen" class="screen reader-screen">
+      
+      <!-- Reader Header -->
+      <header class="reader-header" id="reader-header">
+        <button class="reader-back-btn" id="reader-back-btn" aria-label="Back to library">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          Library
+        </button>
+        <div class="reader-title-bar">
+          <div class="reader-book-title" id="reader-book-title"></div>
+          <div class="reader-chapter-title" id="reader-chapter-title"></div>
+        </div>
+        <div class="reader-header-actions">
+          <button class="icon-btn" id="tts-btn" aria-label="Read aloud">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="toc-btn" aria-label="Table of contents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="20" height="20">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="settings-reader-btn" aria-label="Reader settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+              <polyline points="4 7 4 4 20 4 20 7"/>
+              <line x1="9" y1="20" x2="15" y2="20"/>
+              <line x1="12" y1="4" x2="12" y2="20"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Reader Content -->
+      <div class="reader-content" id="reader-content">
+        <div class="reader-body" id="reader-body">
+          <!-- Chapter content rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Reader Footer / Navigation -->
+      <div class="reader-footer" id="reader-footer">
+        <div class="reader-nav">
+          <button class="nav-btn" id="prev-chapter-btn" aria-label="Previous chapter">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            Previous
+          </button>
+          <span class="reader-progress-text" id="reader-progress-text"></span>
+          <button class="nav-btn" id="next-chapter-btn" aria-label="Next chapter">
+            Next
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- TTS Player Bar -->
+      <div class="tts-bar" id="tts-bar">
+        <div class="tts-controls">
+          <button class="tts-skip-btn" id="tts-skip-back" aria-label="Previous sentence">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <polygon points="19 20 9 12 19 4 19 20"/>
+              <line x1="5" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+          </button>
+          <button class="tts-play-btn" id="tts-play-btn" aria-label="Play/Pause">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+          </button>
+          <button class="tts-skip-btn" id="tts-skip-forward" aria-label="Next sentence">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <polygon points="5 4 15 12 5 20 5 4"/>
+              <line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+          </button>
+          <div class="tts-info">
+            <div class="tts-current-text" id="tts-current-text"></div>
+            <div class="tts-status" id="tts-status">Reading aloud</div>
+            <div class="tts-engine-label" id="tts-engine-label"></div>
+          </div>
+          <button class="tts-speed-btn" id="tts-speed-btn" aria-label="Change speed">1.0x</button>
+          <button class="tts-stop-btn" id="tts-stop-btn" aria-label="Stop reading">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== TOC DRAWER ===== -->
+    <div class="drawer-overlay" id="toc-overlay"></div>
+    <nav class="drawer" id="toc-drawer" aria-label="Table of Contents">
+      <div class="drawer-header">
+        <h2 class="drawer-title">Contents</h2>
+        <button class="icon-btn" id="toc-close-btn" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="20" height="20">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="drawer-content">
+        <div class="toc-list" id="toc-list" role="list">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+    </nav>
+
+    <!-- ===== SETTINGS PANEL ===== -->
+    <div class="settings-overlay" id="settings-overlay"></div>
+    <div class="settings-panel" id="settings-panel" role="dialog" aria-label="Settings">
+      <div class="settings-handle"></div>
+      <div class="settings-header">
+        <h2 class="settings-title">Settings</h2>
+        <button class="icon-btn" id="settings-close-btn" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="20" height="20">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-content" id="settings-content">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+    <!-- ===== TTS LOADING OVERLAY ===== -->
+    <div class="tts-loading-overlay" id="tts-loading">
+      <div class="tts-loading-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="64" height="64">
+          <line x1="4" y1="8" x2="4" y2="16"/>
+          <line x1="8" y1="5" x2="8" y2="19"/>
+          <line x1="12" y1="3" x2="12" y2="21"/>
+          <line x1="16" y1="5" x2="16" y2="19"/>
+          <line x1="20" y1="8" x2="20" y2="16"/>
+        </svg>
+      </div>
+      <h2 class="tts-loading-title">Preparing AI Voice</h2>
+      <p class="tts-loading-subtitle">
+        Downloading the Kokoro text-to-speech model. This happens once and runs entirely on your device.
+      </p>
+      <div class="tts-progress-container">
+        <div class="tts-progress-bar-bg">
+          <div class="tts-progress-bar-fill" id="tts-progress-fill"></div>
+        </div>
+        <p class="tts-progress-text" id="tts-progress-msg">Initializing...</p>
+      </div>
+      <button class="tts-loading-cancel" id="tts-cancel-loading">Cancel</button>
+      
+      <div class="tts-error" id="tts-error">
+        <div class="tts-error-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="48" height="48">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+        </div>
+        <h3>Model Loading Issue</h3>
+        <p>The TTS model couldn't load in this environment. Install OpenShelf as a PWA (tap "Add to Home Screen") for full offline TTS support.</p>
+      </div>
+    </div>
+
+    <!-- ===== IMPORT LOADER ===== -->
+    <div class="import-loader" id="import-loader">
+      <div class="import-loader-content">
+        <div class="spinner"></div>
+        <p>Importing book...</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
