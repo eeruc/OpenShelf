@@ -2,6 +2,13 @@
  * OpenShelf TTS Engine
  * Runs Kokoro 82M entirely in a Web Worker so the UI never freezes.
  * The main thread only handles audio playback via AudioContext.
+ * 
+ * iOS Safari Audio Strategy:
+ * - AudioContext created + "warmed up" on first user gesture (silent buffer play)
+ * - Global touch/click/keydown listeners persist until audio is confirmed unlocked
+ * - Hidden <audio> element keeps iOS audio session alive
+ * - "interrupted" state (iOS screen lock) handled with suspend→resume cycle
+ * - webkitAudioContext fallback for older iOS
  */
 
 // Curated Kokoro v1.0 voice catalog — only high-quality voices
@@ -62,16 +69,129 @@ class TTSEngine {
     this.onError = null;
   }
 
-  // ——— Audio Context (must be created from user gesture) ———
+  // ——— Audio Context (iOS-safe, must be created from user gesture) ———
 
+  /**
+   * Create or resume the AudioContext. On iOS Safari, simply creating the context
+   * and calling resume() is NOT enough — we must also play a silent buffer to
+   * "warm up" the audio hardware. This must happen synchronously inside a user
+   * gesture handler (touchend, click, keydown).
+   */
   ensureAudioContext() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+
     if (!this.audioContext) {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioContext = new AC();
+      this._audioUnlocked = false;
+      this._setupVisibilityHandler();
+      this._ensureHelperAudioElement();
     }
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
-    }
+
+    // Always attempt resume + silent buffer on user gesture
+    this._unlockAudioContext();
+
     return this.audioContext;
+  }
+
+  /**
+   * Play a silent buffer to "warm up" iOS audio hardware.
+   * This is the critical trick: iOS Safari won't output real audio from
+   * AudioContext unless a buffer has been played during a user gesture.
+   */
+  _unlockAudioContext() {
+    if (!this.audioContext) return;
+
+    const ctx = this.audioContext;
+
+    // Handle iOS "interrupted" state (occurs after screen lock/unlock)
+    if (ctx.state === 'interrupted') {
+      ctx.resume().catch(() => {});
+    }
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    // Play a silent buffer — this is what actually unlocks iOS audio
+    try {
+      const silentBuffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = silentBuffer;
+      source.connect(ctx.destination);
+      source.start(0);
+      source.onended = () => {
+        this._audioUnlocked = true;
+      };
+    } catch (e) {
+      // Ignore — older browsers may not support createBuffer
+    }
+
+    // Also poke the helper <audio> element
+    this._pokeHelperAudio();
+  }
+
+  /**
+   * Create a hidden <audio> element that keeps the iOS audio session alive.
+   * Without this, iOS may kill the audio session after screen lock/tab switch,
+   * making AudioContext silently fail even though state shows "running".
+   */
+  _ensureHelperAudioElement() {
+    if (this._helperAudio) return;
+    // Create a tiny silent WAV data URI
+    // This is a valid 44-byte WAV file containing a single sample of silence
+    const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    const audio = document.createElement('audio');
+    audio.setAttribute('x-webkit-airplay', 'deny'); // Prevent AirPlay popup
+    audio.preload = 'auto';
+    audio.loop = false;
+    audio.src = silentWav;
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    this._helperAudio = audio;
+  }
+
+  /**
+   * Play the silent helper <audio> element. On iOS this helps keep the
+   * audio session alive and is another unlock vector.
+   */
+  _pokeHelperAudio() {
+    if (!this._helperAudio) return;
+    try {
+      const p = this._helperAudio.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* ignore */ }
+  }
+
+  /**
+   * Handle page visibility changes — when iOS suspends/resumes the page,
+   * AudioContext can get stuck. We do a suspend→resume cycle to recover.
+   */
+  _setupVisibilityHandler() {
+    if (this._visibilityHandlerSet) return;
+    this._visibilityHandlerSet = true;
+
+    document.addEventListener('visibilitychange', () => {
+      if (!this.audioContext) return;
+
+      if (document.visibilityState === 'visible') {
+        const ctx = this.audioContext;
+        const state = ctx.state;
+
+        // iOS "interrupted" state — need to resume
+        if (state === 'interrupted' || state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+
+        // If state is "running" but audio is actually broken (Safari bug),
+        // do a suspend→resume cycle to force-reset the audio device
+        if (state === 'running' && this.isPlaying) {
+          ctx.suspend().then(() => {
+            return ctx.resume();
+          }).catch(() => {});
+        }
+      }
+    });
   }
 
   // ——— Initialization ———
@@ -292,23 +412,33 @@ class TTSEngine {
     finally { this._pregenerating = false; }
   }
 
-  _playPCM(samples, sampleRate) {
+  async _playPCM(samples, sampleRate) {
+    if (!this.audioContext) return;
+
+    const ctx = this.audioContext;
+
+    // iOS recovery: handle interrupted/suspended states before playback
+    if (ctx.state === 'interrupted' || ctx.state === 'suspended') {
+      try { await ctx.resume(); } catch (e) { /* */ }
+    }
+
+    // If still not running after resume, try suspend→resume cycle (Safari bug workaround)
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.suspend();
+        await ctx.resume();
+      } catch (e) { /* */ }
+    }
+
     return new Promise((resolve) => {
-      if (!this.audioContext) { resolve(); return; }
-
-      // Make sure context is running
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-
       const sr = sampleRate || 24000;
-      const audioBuffer = this.audioContext.createBuffer(1, samples.length, sr);
+      const audioBuffer = ctx.createBuffer(1, samples.length, sr);
       audioBuffer.getChannelData(0).set(samples);
 
-      const source = this.audioContext.createBufferSource();
+      const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.playbackRate.value = this.speed;
-      source.connect(this.audioContext.destination);
+      source.connect(ctx.destination);
       this.currentSource = source;
 
       source.onended = () => {
@@ -316,26 +446,47 @@ class TTSEngine {
         resolve();
       };
 
+      // Safety timeout in case onended never fires (iOS edge case)
+      const durationMs = (samples.length / sr) * 1000 / this.speed + 2000;
+      const safetyTimer = setTimeout(() => {
+        if (this.currentSource === source) {
+          this.currentSource = null;
+          resolve();
+        }
+      }, durationMs);
+
+      source.addEventListener('ended', () => clearTimeout(safetyTimer));
+
       source.start(0);
     });
   }
 
-  _playWAV(arrayBuffer) {
+  async _playWAV(arrayBuffer) {
+    if (!this.audioContext) return;
+
+    const ctx = this.audioContext;
+
+    // iOS recovery: handle interrupted/suspended states
+    if (ctx.state === 'interrupted' || ctx.state === 'suspended') {
+      try { await ctx.resume(); } catch (e) { /* */ }
+    }
+
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.suspend();
+        await ctx.resume();
+      } catch (e) { /* */ }
+    }
+
     return new Promise((resolve) => {
-      if (!this.audioContext) { resolve(); return; }
-
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-
-      this.audioContext.decodeAudioData(arrayBuffer,
+      ctx.decodeAudioData(arrayBuffer,
         (audioBuffer) => {
           if (this._aborted || !this.isPlaying) { resolve(); return; }
 
-          const source = this.audioContext.createBufferSource();
+          const source = ctx.createBufferSource();
           source.buffer = audioBuffer;
           source.playbackRate.value = this.speed;
-          source.connect(this.audioContext.destination);
+          source.connect(ctx.destination);
           this.currentSource = source;
 
           source.onended = () => {

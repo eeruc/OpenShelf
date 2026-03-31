@@ -803,6 +803,33 @@ function bindSettingsEvents(container) {
 }
 
 // ===== TTS INTEGRATION =====
+
+/**
+ * Global audio unlock: register touch/click/key listeners on the document
+ * that will pre-warm the AudioContext on the very first user interaction.
+ * This is critical for iOS Safari where AudioContext must be unlocked during
+ * a user gesture BEFORE any async work (like model download) happens.
+ */
+let _globalAudioUnlockBound = false;
+function setupGlobalAudioUnlock() {
+  if (_globalAudioUnlockBound) return;
+  _globalAudioUnlockBound = true;
+
+  const events = ['touchstart', 'touchend', 'click', 'keydown'];
+  const unlock = () => {
+    ttsEngine.ensureAudioContext();
+    // Keep listeners active — iOS can re-suspend AudioContext after screen lock
+    // We'll re-unlock on every interaction to be safe
+  };
+
+  events.forEach(evt => {
+    document.addEventListener(evt, unlock, { capture: true, passive: true });
+  });
+}
+
+// Activate global unlock as soon as the module loads
+setupGlobalAudioUnlock();
+
 async function startTTS() {
   const book = AppState.currentBook;
   if (!book) return;
@@ -812,6 +839,7 @@ async function startTTS() {
 
   // CRITICAL: Create AudioContext immediately on user gesture
   // Browsers block audio playback unless AudioContext is created during a user interaction.
+  // On iOS Safari, we must also play a silent buffer to "warm up" the hardware.
   // If we wait until after async model init, the gesture context is lost.
   ttsEngine.ensureAudioContext();
 
@@ -891,9 +919,21 @@ async function startTTS() {
     updateTTSBar();
   };
 
-  // Ensure AudioContext is running (in case it got suspended)
-  if (ttsEngine.audioContext?.state === 'suspended') {
-    await ttsEngine.audioContext.resume();
+  // Re-unlock AudioContext right before playback (iOS may have re-suspended it
+  // during the async model init period)
+  ttsEngine.ensureAudioContext();
+  const ctx = ttsEngine.audioContext;
+  if (ctx) {
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+      try { await ctx.resume(); } catch (e) { /* */ }
+    }
+    // If context is STILL not running, try the nuclear option: suspend then resume
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.suspend();
+        await ctx.resume();
+      } catch (e) { /* */ }
+    }
   }
 
   // Start playing
