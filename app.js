@@ -15,7 +15,7 @@ const AppState = {
     lineHeight: 1.7,
     fontFamily: 'serif',
     theme: 'system',
-    ttsVoice: 'af_heart',
+    ttsVoice: 'af_heart',  // Locked to Heart voice
     ttsSpeed: 1.0,
     modelDtype: 'fp16'
   },
@@ -692,10 +692,10 @@ function renderSettingsContent() {
     <div class="settings-section">
       <div class="settings-section-title">Text-to-Speech</div>
       
-      <div class="setting-row">
+      <div class="setting-row" style="margin-bottom: var(--space-3);">
         <span class="setting-label">Voice</span>
+        <span class="setting-value">💛 Heart</span>
       </div>
-      ${renderVoiceGroups(s.ttsVoice)}
 
       <div class="setting-row">
         <span class="setting-label">Speed</span>

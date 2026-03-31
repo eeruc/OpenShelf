@@ -13,29 +13,9 @@
  * - Media Session API provides lock screen controls and book metadata
  */
 
-// Curated Kokoro v1.0 voice catalog — only high-quality voices
+// Kokoro v1.0 — Heart voice only (highest rated, most natural)
 export const VOICES = [
-  // American English — Female (top tier)
-  { id: 'af_heart',   name: 'Heart',   gender: 'F', accent: 'US', emoji: '💛', grade: 'A',  desc: 'Warm, natural' },
-  { id: 'af_bella',   name: 'Bella',   gender: 'F', accent: 'US', emoji: '🌸', grade: 'A-', desc: 'Soft, clear' },
-  { id: 'af_nicole',  name: 'Nicole',  gender: 'F', accent: 'US', emoji: '🎵', grade: 'B-', desc: 'Bright, expressive' },
-  { id: 'af_sarah',   name: 'Sarah',   gender: 'F', accent: 'US', emoji: '🌺', grade: 'B-', desc: 'Calm, articulate' },
-  { id: 'af_nova',    name: 'Nova',    gender: 'F', accent: 'US', emoji: '✨', grade: 'B',  desc: 'Smooth, modern' },
-  { id: 'af_sky',     name: 'Sky',     gender: 'F', accent: 'US', emoji: '☁️', grade: 'B',  desc: 'Light, gentle' },
-
-  // American English — Male (top tier)
-  { id: 'am_michael', name: 'Michael', gender: 'M', accent: 'US', emoji: '📘', grade: 'B',  desc: 'Deep, authoritative' },
-  { id: 'am_fenrir',  name: 'Fenrir',  gender: 'M', accent: 'US', emoji: '🐺', grade: 'B',  desc: 'Strong, resonant' },
-  { id: 'am_puck',    name: 'Puck',    gender: 'M', accent: 'US', emoji: '🎭', grade: 'B',  desc: 'Lively, dynamic' },
-  { id: 'am_eric',    name: 'Eric',    gender: 'M', accent: 'US', emoji: '📻', grade: 'B-', desc: 'Clear, steady' },
-
-  // British English — Female
-  { id: 'bf_emma',     name: 'Emma',     gender: 'F', accent: 'UK', emoji: '🫖', grade: 'B',  desc: 'Elegant, refined' },
-  { id: 'bf_isabella', name: 'Isabella', gender: 'F', accent: 'UK', emoji: '🌹', grade: 'B-', desc: 'Rich, composed' },
-
-  // British English — Male
-  { id: 'bm_george',  name: 'George', gender: 'M', accent: 'UK', emoji: '📖', grade: 'B-', desc: 'Classic, warm' },
-  { id: 'bm_fable',   name: 'Fable',  gender: 'M', accent: 'UK', emoji: '📕', grade: 'B-', desc: 'Storyteller tone' },
+  { id: 'af_heart', name: 'Heart', gender: 'F', accent: 'US', emoji: '💛', grade: 'A', desc: 'Warm, natural' },
 ];
 
 export const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
