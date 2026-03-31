@@ -179,12 +179,20 @@ class TTSEngine {
   }
 
   /**
-   * Get the correct audio destination node.
-   * If MediaStream routing is active, returns the MediaStreamDestination.
-   * Otherwise falls back to AudioContext.destination.
+   * Connect an audio source node to the output.
+   * Uses DUAL routing: always connects to AudioContext.destination for
+   * immediate playback on all platforms, AND to the MediaStreamDestination
+   * for iOS background/lock screen persistence. The MediaStream routing
+   * is additive — if it fails or isn't supported, audio still plays normally.
    */
-  _getDestination() {
-    return this._mediaStreamDest || this.audioContext?.destination;
+  _connectToOutput(sourceNode) {
+    if (!this.audioContext) return;
+    // Primary: always connect to the hardware destination
+    sourceNode.connect(this.audioContext.destination);
+    // Secondary: also feed the MediaStream for iOS background audio
+    if (this._mediaStreamDest) {
+      try { sourceNode.connect(this._mediaStreamDest); } catch (e) { /* ignore */ }
+    }
   }
 
   /**
@@ -478,8 +486,6 @@ class TTSEngine {
     // Make sure the media stream <audio> element is playing
     this._ensureMediaStreamPlaying();
 
-    const dest = this._getDestination();
-
     return new Promise((resolve) => {
       const sr = sampleRate || 24000;
       const audioBuffer = ctx.createBuffer(1, samples.length, sr);
@@ -488,7 +494,7 @@ class TTSEngine {
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.playbackRate.value = this.speed;
-      source.connect(dest);
+      this._connectToOutput(source);
       this.currentSource = source;
 
       source.onended = () => {
@@ -531,8 +537,6 @@ class TTSEngine {
     // Make sure the media stream <audio> element is playing
     this._ensureMediaStreamPlaying();
 
-    const dest = this._getDestination();
-
     return new Promise((resolve) => {
       ctx.decodeAudioData(arrayBuffer,
         (audioBuffer) => {
@@ -541,7 +545,7 @@ class TTSEngine {
           const source = ctx.createBufferSource();
           source.buffer = audioBuffer;
           source.playbackRate.value = this.speed;
-          source.connect(dest);
+          this._connectToOutput(source);
           this.currentSource = source;
 
           source.onended = () => {
