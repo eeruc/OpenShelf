@@ -4,11 +4,13 @@
  * The main thread only handles audio playback via AudioContext.
  * 
  * iOS Safari Audio Strategy:
- * - AudioContext created + "warmed up" on first user gesture (silent buffer play)
+ * - AudioContext output routed through MediaStreamDestination → <audio> element
+ *   so iOS treats it as a media stream and allows background/lock screen playback
+ * - AudioContext "warmed up" on first user gesture (silent buffer play)
  * - Global touch/click/keydown listeners persist until audio is confirmed unlocked
- * - Hidden <audio> element keeps iOS audio session alive
  * - "interrupted" state (iOS screen lock) handled with suspend→resume cycle
  * - webkitAudioContext fallback for older iOS
+ * - Media Session API provides lock screen controls and book metadata
  */
 
 // Curated Kokoro v1.0 voice catalog — only high-quality voices
@@ -60,6 +62,14 @@ class TTSEngine {
     this._pregenerating = false;
     this._isDownloading = false;  // true if actually downloading model (not cached)
 
+    // MediaStream routing for background/lock screen playback
+    this._mediaStreamDest = null;
+    this._mediaAudioEl = null;
+
+    // Media Session metadata
+    this._bookTitle = '';
+    this._chapterTitle = '';
+
     // Callbacks
     this.onProgress = null;
     this.onSentenceStart = null;
@@ -85,7 +95,7 @@ class TTSEngine {
       this.audioContext = new AC();
       this._audioUnlocked = false;
       this._setupVisibilityHandler();
-      this._ensureHelperAudioElement();
+      this._setupMediaStreamRouting();
     }
 
     // Always attempt resume + silent buffer on user gesture
@@ -132,23 +142,61 @@ class TTSEngine {
   }
 
   /**
-   * Create a hidden <audio> element that keeps the iOS audio session alive.
-   * Without this, iOS may kill the audio session after screen lock/tab switch,
-   * making AudioContext silently fail even though state shows "running".
+   * Route AudioContext output through a MediaStreamDestination → <audio> element.
+   * This is the critical trick for iOS background/lock screen playback:
+   * Safari treats MediaStream-backed <audio> elements as "live streams" 
+   * (like a WebRTC call) and keeps them alive when the screen locks or
+   * the app goes to background. Without this, AudioContext.destination
+   * output is silenced immediately when iOS suspends the page.
    */
-  _ensureHelperAudioElement() {
-    if (this._helperAudio) return;
-    // Create a tiny silent WAV data URI
-    // This is a valid 44-byte WAV file containing a single sample of silence
-    const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+  _setupMediaStreamRouting() {
+    if (this._mediaStreamDest || !this.audioContext) return;
+
+    const ctx = this.audioContext;
+
+    // Create a MediaStreamDestination — audio nodes connect here instead of ctx.destination
+    try {
+      this._mediaStreamDest = ctx.createMediaStreamDestination();
+    } catch (e) {
+      // Fallback: some older browsers don't support createMediaStreamDestination
+      console.warn('MediaStreamDestination not supported, using direct output');
+      this._mediaStreamDest = null;
+      return;
+    }
+
+    // Create a hidden <audio> element that plays the MediaStream
     const audio = document.createElement('audio');
-    audio.setAttribute('x-webkit-airplay', 'deny'); // Prevent AirPlay popup
-    audio.preload = 'auto';
-    audio.loop = false;
-    audio.src = silentWav;
+    audio.setAttribute('x-webkit-airplay', 'deny');
     audio.style.display = 'none';
+    audio.srcObject = this._mediaStreamDest.stream;
     document.body.appendChild(audio);
-    this._helperAudio = audio;
+    this._mediaAudioEl = audio;
+
+    // Start playing the stream — must happen in a user gesture context
+    // (ensureAudioContext is called from gesture handlers)
+    const p = audio.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  /**
+   * Get the correct audio destination node.
+   * If MediaStream routing is active, returns the MediaStreamDestination.
+   * Otherwise falls back to AudioContext.destination.
+   */
+  _getDestination() {
+    return this._mediaStreamDest || this.audioContext?.destination;
+  }
+
+  /**
+   * Ensure the media <audio> element is playing.
+   * Called before each PCM/WAV playback to make sure the stream is active.
+   */
+  _ensureMediaStreamPlaying() {
+    if (!this._mediaAudioEl) return;
+    if (this._mediaAudioEl.paused) {
+      const p = this._mediaAudioEl.play();
+      if (p && p.catch) p.catch(() => {});
+    }
   }
 
   /**
@@ -156,11 +204,7 @@ class TTSEngine {
    * audio session alive and is another unlock vector.
    */
   _pokeHelperAudio() {
-    if (!this._helperAudio) return;
-    try {
-      const p = this._helperAudio.play();
-      if (p && p.catch) p.catch(() => {});
-    } catch (e) { /* ignore */ }
+    this._ensureMediaStreamPlaying();
   }
 
   /**
@@ -342,6 +386,7 @@ class TTSEngine {
     this._aborted = false;
     this._pregenBuffer = null;
     this.onStateChange?.('playing');
+    this._updateMediaSessionState('playing');
 
     // Ensure AudioContext is ready (should already be created from user gesture)
     this.ensureAudioContext();
@@ -430,6 +475,11 @@ class TTSEngine {
       } catch (e) { /* */ }
     }
 
+    // Make sure the media stream <audio> element is playing
+    this._ensureMediaStreamPlaying();
+
+    const dest = this._getDestination();
+
     return new Promise((resolve) => {
       const sr = sampleRate || 24000;
       const audioBuffer = ctx.createBuffer(1, samples.length, sr);
@@ -438,7 +488,7 @@ class TTSEngine {
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.playbackRate.value = this.speed;
-      source.connect(ctx.destination);
+      source.connect(dest);
       this.currentSource = source;
 
       source.onended = () => {
@@ -478,6 +528,11 @@ class TTSEngine {
       } catch (e) { /* */ }
     }
 
+    // Make sure the media stream <audio> element is playing
+    this._ensureMediaStreamPlaying();
+
+    const dest = this._getDestination();
+
     return new Promise((resolve) => {
       ctx.decodeAudioData(arrayBuffer,
         (audioBuffer) => {
@@ -486,7 +541,7 @@ class TTSEngine {
           const source = ctx.createBufferSource();
           source.buffer = audioBuffer;
           source.playbackRate.value = this.speed;
-          source.connect(ctx.destination);
+          source.connect(dest);
           this.currentSource = source;
 
           source.onended = () => {
@@ -529,6 +584,7 @@ class TTSEngine {
       this.audioContext.suspend();
     }
     this.onStateChange?.('paused');
+    this._updateMediaSessionState('paused');
   }
 
   resume() {
@@ -541,6 +597,7 @@ class TTSEngine {
       this.audioContext.resume();
     }
     this.onStateChange?.('playing');
+    this._updateMediaSessionState('playing');
   }
 
   stop() {
@@ -560,6 +617,7 @@ class TTSEngine {
     }
 
     this.onStateChange?.('stopped');
+    this._updateMediaSessionState('stopped');
   }
 
   skipForward() {
@@ -612,17 +670,95 @@ class TTSEngine {
     return `Kokoro (${this.dtype})`;
   }
 
+  // ——— Media Session (lock screen controls) ———
+
+  /**
+   * Set book metadata for Media Session lock screen display.
+   * Call this when TTS starts playing to show book info on lock screen.
+   */
+  setMediaSessionMetadata(bookTitle, chapterTitle, coverUrl) {
+    this._bookTitle = bookTitle || '';
+    this._chapterTitle = chapterTitle || '';
+
+    if (!('mediaSession' in navigator)) return;
+
+    const artwork = [];
+    if (coverUrl) {
+      artwork.push({ src: coverUrl, sizes: '512x512', type: 'image/png' });
+    }
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: chapterTitle || bookTitle || 'OpenShelf',
+      artist: bookTitle && chapterTitle ? bookTitle : 'OpenShelf',
+      album: 'OpenShelf',
+      artwork: artwork.length > 0 ? artwork : [
+        { src: './assets/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: './assets/icon-512.png', sizes: '512x512', type: 'image/png' }
+      ]
+    });
+  }
+
+  /**
+   * Set up Media Session action handlers for lock screen controls.
+   * Must be called once — maps lock screen buttons to TTS engine controls.
+   */
+  setupMediaSessionHandlers({ onPlay, onPause, onStop, onNextTrack, onPrevTrack }) {
+    if (!('mediaSession' in navigator)) return;
+
+    const tryHandler = (action, handler) => {
+      try { navigator.mediaSession.setActionHandler(action, handler); }
+      catch (e) { /* action not supported */ }
+    };
+
+    tryHandler('play', () => {
+      if (onPlay) onPlay();
+    });
+    tryHandler('pause', () => {
+      if (onPause) onPause();
+    });
+    tryHandler('stop', () => {
+      if (onStop) onStop();
+    });
+    tryHandler('nexttrack', () => {
+      if (onNextTrack) onNextTrack();
+    });
+    tryHandler('previoustrack', () => {
+      if (onPrevTrack) onPrevTrack();
+    });
+  }
+
+  /**
+   * Update Media Session playback state to sync lock screen UI.
+   */
+  _updateMediaSessionState(state) {
+    if (!('mediaSession' in navigator)) return;
+    switch (state) {
+      case 'playing': navigator.mediaSession.playbackState = 'playing'; break;
+      case 'paused':  navigator.mediaSession.playbackState = 'paused';  break;
+      case 'stopped': navigator.mediaSession.playbackState = 'none';    break;
+    }
+  }
+
   shutdown() {
     this.stop();
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
     }
+    // Clean up media stream routing
+    if (this._mediaAudioEl) {
+      this._mediaAudioEl.pause();
+      this._mediaAudioEl.srcObject = null;
+      this._mediaAudioEl.remove();
+      this._mediaAudioEl = null;
+    }
+    this._mediaStreamDest = null;
     if (this.audioContext) {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
     this.isReady = false;
+    this._updateMediaSessionState('stopped');
   }
 }
 

@@ -830,6 +830,53 @@ function setupGlobalAudioUnlock() {
 // Activate global unlock as soon as the module loads
 setupGlobalAudioUnlock();
 
+// Set up Media Session lock screen controls (play/pause/skip from lock screen)
+let _mediaSessionSetup = false;
+function setupMediaSession() {
+  if (_mediaSessionSetup) return;
+  _mediaSessionSetup = true;
+
+  ttsEngine.setupMediaSessionHandlers({
+    onPlay: () => {
+      if (ttsEngine.isPaused) {
+        ttsEngine.resume();
+        updateTTSBar();
+      } else if (!ttsEngine.isPlaying) {
+        startTTS();
+      }
+    },
+    onPause: () => {
+      if (ttsEngine.isPlaying && !ttsEngine.isPaused) {
+        ttsEngine.pause();
+        updateTTSBar();
+      }
+    },
+    onStop: () => {
+      stopTTS();
+    },
+    onNextTrack: () => {
+      // Skip to next chapter
+      if (AppState.currentBook && AppState.currentChapter < AppState.currentBook.chapters.length - 1) {
+        ttsEngine.stop();
+        nextChapter();
+        setTimeout(() => startTTS(), 300);
+      } else {
+        skipTTSForward();
+      }
+    },
+    onPrevTrack: () => {
+      // Skip to previous chapter
+      if (AppState.currentBook && AppState.currentChapter > 0) {
+        ttsEngine.stop();
+        prevChapter();
+        setTimeout(() => startTTS(), 300);
+      } else {
+        skipTTSBackward();
+      }
+    }
+  });
+}
+
 async function startTTS() {
   const book = AppState.currentBook;
   if (!book) return;
@@ -890,6 +937,15 @@ async function startTTS() {
     showToast('No readable text in this chapter');
     return;
   }
+
+  // Set up Media Session lock screen controls + metadata
+  setupMediaSession();
+  const chapterTitle = chapter.title || `Chapter ${AppState.currentChapter + 1}`;
+  ttsEngine.setMediaSessionMetadata(
+    book.title || 'Untitled Book',
+    chapterTitle,
+    book.coverUrl || null
+  );
 
   // Set up callbacks
   ttsEngine.setVoice(AppState.settings.ttsVoice);
