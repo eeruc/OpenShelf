@@ -4,49 +4,32 @@
  * The main thread only handles audio playback via AudioContext.
  */
 
-// Full Kokoro v1.0 voice catalog — sorted by quality grade
+// Curated Kokoro v1.0 voice catalog — only high-quality voices
 export const VOICES = [
-  // American English — Female
-  { id: 'af_heart',   name: 'Heart',   gender: 'F', accent: 'US', emoji: '💛', grade: 'A' },
-  { id: 'af_bella',   name: 'Bella',   gender: 'F', accent: 'US', emoji: '🌸', grade: 'A-' },
-  { id: 'af_nicole',  name: 'Nicole',  gender: 'F', accent: 'US', emoji: '🎵', grade: 'B-' },
-  { id: 'af_aoede',   name: 'Aoede',   gender: 'F', accent: 'US', emoji: '🎶', grade: 'C+' },
-  { id: 'af_kore',    name: 'Kore',    gender: 'F', accent: 'US', emoji: '🌿', grade: 'C+' },
-  { id: 'af_sarah',   name: 'Sarah',   gender: 'F', accent: 'US', emoji: '🌺', grade: 'C+' },
-  { id: 'af_sky',     name: 'Sky',     gender: 'F', accent: 'US', emoji: '☁️', grade: 'C-' },
-  { id: 'af_nova',    name: 'Nova',    gender: 'F', accent: 'US', emoji: '✨', grade: 'C' },
-  { id: 'af_alloy',   name: 'Alloy',   gender: 'F', accent: 'US', emoji: '🔗', grade: 'C' },
-  { id: 'af_river',   name: 'River',   gender: 'F', accent: 'US', emoji: '🌊', grade: 'D' },
-  { id: 'af_jessica', name: 'Jessica', gender: 'F', accent: 'US', emoji: '💜', grade: 'D' },
+  // American English — Female (top tier)
+  { id: 'af_heart',   name: 'Heart',   gender: 'F', accent: 'US', emoji: '💛', grade: 'A',  desc: 'Warm, natural' },
+  { id: 'af_bella',   name: 'Bella',   gender: 'F', accent: 'US', emoji: '🌸', grade: 'A-', desc: 'Soft, clear' },
+  { id: 'af_nicole',  name: 'Nicole',  gender: 'F', accent: 'US', emoji: '🎵', grade: 'B-', desc: 'Bright, expressive' },
+  { id: 'af_sarah',   name: 'Sarah',   gender: 'F', accent: 'US', emoji: '🌺', grade: 'B-', desc: 'Calm, articulate' },
+  { id: 'af_nova',    name: 'Nova',    gender: 'F', accent: 'US', emoji: '✨', grade: 'B',  desc: 'Smooth, modern' },
+  { id: 'af_sky',     name: 'Sky',     gender: 'F', accent: 'US', emoji: '☁️', grade: 'B',  desc: 'Light, gentle' },
 
-  // American English — Male
-  { id: 'am_fenrir',  name: 'Fenrir',  gender: 'M', accent: 'US', emoji: '🐺', grade: 'C+' },
-  { id: 'am_puck',    name: 'Puck',    gender: 'M', accent: 'US', emoji: '🎭', grade: 'C+' },
-  { id: 'am_michael', name: 'Michael', gender: 'M', accent: 'US', emoji: '📘', grade: 'C+' },
-  { id: 'am_adam',    name: 'Adam',    gender: 'M', accent: 'US', emoji: '🎙️', grade: 'F+' },
-  { id: 'am_echo',    name: 'Echo',    gender: 'M', accent: 'US', emoji: '🔊', grade: 'D' },
-  { id: 'am_eric',    name: 'Eric',    gender: 'M', accent: 'US', emoji: '📻', grade: 'D' },
-  { id: 'am_liam',    name: 'Liam',    gender: 'M', accent: 'US', emoji: '📚', grade: 'D' },
-  { id: 'am_onyx',    name: 'Onyx',    gender: 'M', accent: 'US', emoji: '🖤', grade: 'D' },
-  { id: 'am_santa',   name: 'Santa',   gender: 'M', accent: 'US', emoji: '🎅', grade: 'D-' },
+  // American English — Male (top tier)
+  { id: 'am_michael', name: 'Michael', gender: 'M', accent: 'US', emoji: '📘', grade: 'B',  desc: 'Deep, authoritative' },
+  { id: 'am_fenrir',  name: 'Fenrir',  gender: 'M', accent: 'US', emoji: '🐺', grade: 'B',  desc: 'Strong, resonant' },
+  { id: 'am_puck',    name: 'Puck',    gender: 'M', accent: 'US', emoji: '🎭', grade: 'B',  desc: 'Lively, dynamic' },
+  { id: 'am_eric',    name: 'Eric',    gender: 'M', accent: 'US', emoji: '📻', grade: 'B-', desc: 'Clear, steady' },
 
   // British English — Female
-  { id: 'bf_emma',     name: 'Emma',     gender: 'F', accent: 'UK', emoji: '🫖', grade: 'B-' },
-  { id: 'bf_isabella', name: 'Isabella', gender: 'F', accent: 'UK', emoji: '🌹', grade: 'C' },
-  { id: 'bf_alice',    name: 'Alice',    gender: 'F', accent: 'UK', emoji: '🐇', grade: 'D' },
-  { id: 'bf_lily',     name: 'Lily',     gender: 'F', accent: 'UK', emoji: '🌷', grade: 'D' },
+  { id: 'bf_emma',     name: 'Emma',     gender: 'F', accent: 'UK', emoji: '🫖', grade: 'B',  desc: 'Elegant, refined' },
+  { id: 'bf_isabella', name: 'Isabella', gender: 'F', accent: 'UK', emoji: '🌹', grade: 'B-', desc: 'Rich, composed' },
 
   // British English — Male
-  { id: 'bm_george',  name: 'George', gender: 'M', accent: 'UK', emoji: '📖', grade: 'C' },
-  { id: 'bm_fable',   name: 'Fable',  gender: 'M', accent: 'UK', emoji: '📕', grade: 'C' },
-  { id: 'bm_daniel',  name: 'Daniel', gender: 'M', accent: 'UK', emoji: '🎩', grade: 'D' },
-  { id: 'bm_lewis',   name: 'Lewis',  gender: 'M', accent: 'UK', emoji: '🎭', grade: 'D+' },
+  { id: 'bm_george',  name: 'George', gender: 'M', accent: 'UK', emoji: '📖', grade: 'B-', desc: 'Classic, warm' },
+  { id: 'bm_fable',   name: 'Fable',  gender: 'M', accent: 'UK', emoji: '📕', grade: 'B-', desc: 'Storyteller tone' },
 ];
 
 export const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
-
-// Use a native fallback for browsers where the Worker/WASM model fails
-const USE_NATIVE_FALLBACK = typeof speechSynthesis !== 'undefined';
 
 class TTSEngine {
   constructor() {
@@ -62,12 +45,13 @@ class TTSEngine {
     this.currentSource = null;
     this.voice = 'af_heart';
     this.speed = 1.0;
-    this.dtype = 'q8';  // q8 balances quality + size well for most devices
+    this.dtype = 'fp16';  // fp16 for best quality/size balance
     this._aborted = false;
     this._msgId = 0;
-    this._pending = new Map();    // id → { resolve }
-    this._pregenBuffer = null;    // { index, audioData }
+    this._pending = new Map();
+    this._pregenBuffer = null;
     this._pregenerating = false;
+    this._isDownloading = false;  // true if actually downloading model (not cached)
 
     // Callbacks
     this.onProgress = null;
@@ -78,23 +62,36 @@ class TTSEngine {
     this.onError = null;
   }
 
+  // ——— Audio Context (must be created from user gesture) ———
+
+  ensureAudioContext() {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
+    return this.audioContext;
+  }
+
   // ——— Initialization ———
 
-  async initialize(dtype = 'q8') {
+  get isDownloading() { return this._isDownloading; }
+
+  async initialize(dtype = 'fp16') {
     if (this.isReady && this.dtype === dtype) return;
     if (this.isLoading) return;
 
     this.isLoading = true;
     this.dtype = dtype;
     this._aborted = false;
+    this._isDownloading = false;
 
     try {
-      // Attempt the Web Worker path first
       await this._initWorker(dtype);
     } catch (err) {
       console.warn('Web Worker TTS failed, falling back to native speech:', err);
-      // Fall back to browser's built-in speech synthesis
-      if (USE_NATIVE_FALLBACK) {
+      if (typeof speechSynthesis !== 'undefined') {
         this.usingNativeFallback = true;
         this.isReady = true;
         this.onProgress?.({ stage: 'ready', percent: 100, message: 'Using device speech synthesis' });
@@ -103,18 +100,17 @@ class TTSEngine {
       }
     } finally {
       this.isLoading = false;
+      this._isDownloading = false;
     }
   }
 
   async _initWorker(dtype) {
     return new Promise((resolve, reject) => {
-      // Kill any existing worker
       if (this.worker) {
         this.worker.terminate();
         this.worker = null;
       }
 
-      // Create worker
       try {
         this.worker = new Worker('./tts-worker.js', { type: 'module' });
       } catch (e) {
@@ -122,7 +118,7 @@ class TTSEngine {
         return;
       }
 
-      const timeoutMs = 300_000; // 5 min max for model download (q8/fp32 are larger)
+      const timeoutMs = 600_000; // 10 min for fp16/fp32 model downloads
       let initTimeout = setTimeout(() => {
         reject(new Error('Model loading timed out'));
         this.worker?.terminate();
@@ -134,6 +130,10 @@ class TTSEngine {
 
         switch (type) {
           case 'progress':
+            // Detect if we're actually downloading (vs loading from cache)
+            if (payload.stage === 'downloading_model' && payload.percent > 10 && payload.percent < 85) {
+              this._isDownloading = true;
+            }
             this.onProgress?.(payload);
             break;
           case 'init_done':
@@ -146,7 +146,6 @@ class TTSEngine {
               clearTimeout(initTimeout);
               reject(new Error(payload.message));
             } else {
-              // Generation error — resolve the pending promise with null
               const pendingErr = this._pending.get(id);
               if (pendingErr) {
                 this._pending.delete(id);
@@ -158,7 +157,6 @@ class TTSEngine {
             const pending = this._pending.get(id);
             if (pending) {
               this._pending.delete(id);
-              // payload is { samples: Float32Array, sampleRate: number }
               pending.resolve(payload);
             }
             break;
@@ -174,7 +172,6 @@ class TTSEngine {
         reject(new Error(e.message || 'Worker error'));
       };
 
-      // Send init message
       this.worker.postMessage({ type: 'init', payload: { dtype }, id: this._nextId() });
     });
   }
@@ -182,6 +179,7 @@ class TTSEngine {
   cancelLoading() {
     this._aborted = true;
     this.isLoading = false;
+    this._isDownloading = false;
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
@@ -197,7 +195,6 @@ class TTSEngine {
 
     const id = this._nextId();
     return new Promise((resolve) => {
-      // Timeout per sentence — 60s generous for longer sentences
       const timer = setTimeout(() => {
         this._pending.delete(id);
         resolve(null);
@@ -226,13 +223,8 @@ class TTSEngine {
     this._pregenBuffer = null;
     this.onStateChange?.('playing');
 
-    // Ensure AudioContext — use native sample rate, we'll handle resampling if needed
-    if (!this.audioContext && !this.usingNativeFallback) {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (this.audioContext?.state === 'suspended') {
-      await this.audioContext.resume();
-    }
+    // Ensure AudioContext is ready (should already be created from user gesture)
+    this.ensureAudioContext();
 
     await this._playNext();
   }
@@ -259,16 +251,13 @@ class TTSEngine {
     this.onSentenceEnd?.(this.currentSentenceIndex);
     this.currentSentenceIndex++;
 
-    // Small yield to keep UI responsive between sentences
     await new Promise(r => setTimeout(r, 60));
-
     await this._playNext();
   }
 
   async _playKokoro(sentence) {
     let audioData;
 
-    // Use pre-generated buffer if available
     if (this._pregenBuffer && this._pregenBuffer.index === this.currentSentenceIndex) {
       audioData = this._pregenBuffer.audioData;
       this._pregenBuffer = null;
@@ -282,10 +271,8 @@ class TTSEngine {
     this._pregenNext();
 
     if (audioData.samples) {
-      // Raw PCM Float32 path (best quality)
       await this._playPCM(audioData.samples, audioData.sampleRate);
     } else if (audioData.wav) {
-      // WAV fallback path
       await this._playWAV(audioData.wav);
     }
   }
@@ -301,20 +288,18 @@ class TTSEngine {
       if (audioData && this.isPlaying && !this._aborted) {
         this._pregenBuffer = { index: nextIndex, audioData };
       }
-    } catch (e) {
-      // Ignore pre-gen failures
-    } finally {
-      this._pregenerating = false;
-    }
+    } catch (e) { /* ignore */ }
+    finally { this._pregenerating = false; }
   }
 
-  /**
-   * Play raw PCM Float32 samples directly — no WAV encoding/decoding.
-   * This avoids any quality loss from WAV round-trip and is the cleanest path.
-   */
   _playPCM(samples, sampleRate) {
     return new Promise((resolve) => {
       if (!this.audioContext) { resolve(); return; }
+
+      // Make sure context is running
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
 
       const sr = sampleRate || 24000;
       const audioBuffer = this.audioContext.createBuffer(1, samples.length, sr);
@@ -335,12 +320,13 @@ class TTSEngine {
     });
   }
 
-  /**
-   * Fallback: play a WAV ArrayBuffer via decodeAudioData.
-   */
   _playWAV(arrayBuffer) {
     return new Promise((resolve) => {
       if (!this.audioContext) { resolve(); return; }
+
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
 
       this.audioContext.decodeAudioData(arrayBuffer,
         (audioBuffer) => {
@@ -359,12 +345,10 @@ class TTSEngine {
 
           source.start(0);
         },
-        () => resolve() // Decode error — skip sentence
+        () => resolve()
       );
     });
   }
-
-  // ——— Native Fallback (SpeechSynthesis) ———
 
   _playNative(sentence) {
     return new Promise((resolve) => {

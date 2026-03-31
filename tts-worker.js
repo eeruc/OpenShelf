@@ -35,20 +35,20 @@ async function handleInit({ dtype }, id) {
       id
     });
 
-    // Dynamic import of kokoro-js (latest stable)
+    // Dynamic import of kokoro-js
     const module = await import('https://esm.sh/kokoro-js@1.2.1');
     const KokoroTTS = module.KokoroTTS;
 
     self.postMessage({
       type: 'progress',
-      payload: { stage: 'downloading_model', percent: 10, message: 'Downloading Kokoro model...' },
+      payload: { stage: 'downloading_model', percent: 10, message: 'Loading Kokoro model...' },
       id
     });
 
     tts = await KokoroTTS.from_pretrained(
       'onnx-community/Kokoro-82M-v1.0-ONNX',
       {
-        dtype: dtype || 'q8',
+        dtype: dtype || 'fp16',
         device: 'wasm',
         progress_callback: (progress) => {
           if (progress.status === 'progress' && progress.total) {
@@ -71,6 +71,7 @@ async function handleInit({ dtype }, id) {
               id
             });
           }
+          // 'initiate' status means starting to load — could be from cache (fast) or network
         }
       }
     );
@@ -106,21 +107,34 @@ async function handleGenerate({ text, voice }, id) {
     const audio = await tts.generate(text, { voice: v });
 
     // Extract raw PCM Float32 samples and sample rate
-    // This avoids the WAV encode → decode round-trip that can degrade quality
     const sampleRate = audio.sampling_rate || 24000;
-    let samples;
+    let samples = null;
 
-    if (audio.audio && audio.audio instanceof Float32Array) {
-      // kokoro-js >= 1.2 returns .audio as Float32Array directly
+    // Try all known paths to get Float32Array samples
+    if (audio.audio instanceof Float32Array) {
       samples = audio.audio;
+    } else if (audio.audio && typeof audio.audio === 'object' && audio.audio.data instanceof Float32Array) {
+      samples = audio.audio.data;
     } else if (typeof audio.toFloat32Array === 'function') {
       samples = audio.toFloat32Array();
-    } else if (audio.data && audio.data instanceof Float32Array) {
+    } else if (audio.data instanceof Float32Array) {
       samples = audio.data;
-    } else {
-      // Fallback: encode to WAV and send that
+    }
+
+    if (samples && samples.length > 0) {
+      // Transfer the Float32Array's underlying buffer (zero-copy)
+      const copy = new Float32Array(samples);
+      self.postMessage(
+        { type: 'audio', payload: { samples: copy, sampleRate }, id },
+        [copy.buffer]
+      );
+      return;
+    }
+
+    // Fallback: try WAV encoding
+    if (typeof audio.toWav === 'function') {
       const wavData = audio.toWav();
-      const buffer = wavData.buffer.slice(0);
+      const buffer = wavData instanceof ArrayBuffer ? wavData : wavData.buffer.slice(0);
       self.postMessage(
         { type: 'audio', payload: { wav: buffer, sampleRate }, id },
         [buffer]
@@ -128,16 +142,27 @@ async function handleGenerate({ text, voice }, id) {
       return;
     }
 
-    // Transfer the Float32Array's underlying buffer (zero-copy)
-    const copy = new Float32Array(samples);
-    self.postMessage(
-      {
-        type: 'audio',
-        payload: { samples: copy, sampleRate },
-        id
-      },
-      [copy.buffer]
-    );
+    // If we got here, we have audio but can't extract it in a known format
+    // Try to serialize whatever we have
+    if (audio.audio) {
+      const rawData = audio.audio;
+      if (ArrayBuffer.isView(rawData)) {
+        const floats = new Float32Array(rawData.buffer, rawData.byteOffset, rawData.byteLength / 4);
+        const copy = new Float32Array(floats);
+        self.postMessage(
+          { type: 'audio', payload: { samples: copy, sampleRate }, id },
+          [copy.buffer]
+        );
+        return;
+      }
+    }
+
+    self.postMessage({
+      type: 'error',
+      payload: { message: 'Could not extract audio data from model output', stage: 'generate' },
+      id
+    });
+
   } catch (error) {
     self.postMessage({
       type: 'error',

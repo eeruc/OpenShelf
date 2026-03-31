@@ -17,7 +17,7 @@ const AppState = {
     theme: 'system',
     ttsVoice: 'af_heart',
     ttsSpeed: 1.0,
-    modelDtype: 'q8'
+    modelDtype: 'fp16'
   },
   currentBook: null,
   currentChapter: 0,
@@ -705,17 +705,17 @@ function renderSettingsContent() {
         <span class="setting-label">Model Quality</span>
       </div>
       <div class="model-selector">
-        <button class="model-option ${s.modelDtype === 'q4' ? 'active' : ''}" data-model="q4">
-          q4
-          <small>~25MB, faster</small>
-        </button>
         <button class="model-option ${s.modelDtype === 'q8' ? 'active' : ''}" data-model="q8">
-          q8
-          <small>~50MB, better</small>
+          Standard
+          <small>~92MB, good</small>
+        </button>
+        <button class="model-option ${s.modelDtype === 'fp16' ? 'active' : ''}" data-model="fp16">
+          High
+          <small>~163MB, natural</small>
         </button>
         <button class="model-option ${s.modelDtype === 'fp32' ? 'active' : ''}" data-model="fp32">
-          fp32
-          <small>~90MB, best</small>
+          Ultra
+          <small>~326MB, best</small>
         </button>
       </div>
     </div>
@@ -810,12 +810,27 @@ async function startTTS() {
   const chapter = book.chapters[AppState.currentChapter];
   if (!chapter) return;
 
+  // CRITICAL: Create AudioContext immediately on user gesture
+  // Browsers block audio playback unless AudioContext is created during a user interaction.
+  // If we wait until after async model init, the gesture context is lost.
+  ttsEngine.ensureAudioContext();
+
   // Initialize engine if needed
   if (!ttsEngine.isReady) {
-    showTTSLoading(true);
+    // Show a lightweight toast initially — will upgrade to full overlay if downloading
+    showToast('Loading AI voice model...');
+    let showedOverlay = false;
+    let downloadCheckTimer = null;
     
     ttsEngine.onProgress = (progress) => {
-      updateTTSLoadingProgress(progress);
+      // If we detect an actual download (not cached), show the full overlay
+      if (ttsEngine.isDownloading && !showedOverlay) {
+        showedOverlay = true;
+        showTTSLoading(true);
+      }
+      if (showedOverlay) {
+        updateTTSLoadingProgress(progress);
+      }
     };
 
     ttsEngine.onError = (error) => {
@@ -833,6 +848,10 @@ async function startTTS() {
     
     showTTSLoading(false);
     if (!ttsEngine.isReady) return;
+    
+    if (!showedOverlay) {
+      showToast('AI voice ready');
+    }
   }
 
   // Extract and split text
@@ -864,7 +883,6 @@ async function startTTS() {
     // Auto-advance to next chapter
     if (AppState.currentChapter < book.chapters.length - 1) {
       nextChapter();
-      // Auto-start TTS on next chapter after a small delay
       setTimeout(() => startTTS(), 500);
     }
   };
@@ -872,6 +890,11 @@ async function startTTS() {
   ttsEngine.onStateChange = (state) => {
     updateTTSBar();
   };
+
+  // Ensure AudioContext is running (in case it got suspended)
+  if (ttsEngine.audioContext?.state === 'suspended') {
+    await ttsEngine.audioContext.resume();
+  }
 
   // Start playing
   await ttsEngine.playSentences(sentences);
