@@ -508,6 +508,11 @@ function saveScrollPosition(container) {
   const percent = container.scrollTop / scrollHeight;
   if (!book.scrollPositions) book.scrollPositions = {};
   book.scrollPositions[AppState.currentChapter] = percent;
+  // Also save current TTS sentence index if TTS is active
+  if (ttsEngine.isPlaying || ttsEngine.isPaused) {
+    if (!book.ttsSentencePositions) book.ttsSentencePositions = {};
+    book.ttsSentencePositions[AppState.currentChapter] = ttsEngine.currentSentenceIndex;
+  }
   saveBook(book);
 }
 
@@ -952,8 +957,15 @@ async function startTTS() {
   ttsEngine.setSpeed(AppState.settings.ttsSpeed);
 
   ttsEngine.onSentenceStart = (index, sentence) => {
+    ttsEngine.currentSentenceIndex = index;
     highlightSentence(sentence);
     updateTTSBarText(sentence);
+    // Persist reading position during TTS playback
+    if (book) {
+      if (!book.ttsSentencePositions) book.ttsSentencePositions = {};
+      book.ttsSentencePositions[AppState.currentChapter] = index;
+      saveBook(book);
+    }
   };
 
   ttsEngine.onSentenceEnd = (index) => {
@@ -1195,6 +1207,162 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// ===== TAP-ON-WORD TTS RESUME =====
+
+/**
+ * Get the word at a specific screen coordinate using Range/caret APIs.
+ * Works by using caretPositionFromPoint (standard) or caretRangeFromPoint (WebKit).
+ */
+function getWordAtPoint(x, y) {
+  let range = null;
+  let textNode = null;
+  let offset = 0;
+
+  // Standard API
+  if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    if (pos && pos.offsetNode && pos.offsetNode.nodeType === Node.TEXT_NODE) {
+      textNode = pos.offsetNode;
+      offset = pos.offset;
+    }
+  }
+  // WebKit fallback (Safari, Chrome)
+  else if (document.caretRangeFromPoint) {
+    range = document.caretRangeFromPoint(x, y);
+    if (range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+      textNode = range.startContainer;
+      offset = range.startOffset;
+    }
+  }
+
+  if (!textNode) return null;
+
+  const text = textNode.textContent;
+  if (!text || offset >= text.length) return null;
+
+  // Find word boundaries around the offset
+  let start = offset;
+  let end = offset;
+
+  while (start > 0 && /\S/.test(text[start - 1])) start--;
+  while (end < text.length && /\S/.test(text[end])) end++;
+
+  const word = text.substring(start, end).trim();
+  return word.length > 0 ? word : null;
+}
+
+/**
+ * Find the sentence containing the tapped word and restart TTS from that sentence.
+ */
+function resumeTTSFromWord(word) {
+  if (!ttsEngine.sentences || ttsEngine.sentences.length === 0) return;
+
+  const cleanWord = word.toLowerCase().replace(/[^a-z0-9']/g, '');
+  if (cleanWord.length < 2) return;
+
+  // Find the first sentence that contains this word
+  let targetIndex = -1;
+  for (let i = 0; i < ttsEngine.sentences.length; i++) {
+    const sentenceLower = ttsEngine.sentences[i].toLowerCase();
+    if (sentenceLower.includes(cleanWord)) {
+      targetIndex = i;
+      break;
+    }
+  }
+
+  if (targetIndex === -1) return;
+
+  // Stop current playback and restart from the target sentence
+  ttsEngine.stop();
+  clearHighlight();
+  showToast(`Resuming from: "${word}..."`);
+
+  // Brief delay so the stop() completes and toast shows
+  setTimeout(() => {
+    startTTSFromSentence(targetIndex);
+  }, 100);
+}
+
+/**
+ * Start TTS from a specific sentence index in the current chapter.
+ */
+async function startTTSFromSentence(sentenceIndex) {
+  const book = AppState.currentBook;
+  if (!book) return;
+
+  const chapter = book.chapters[AppState.currentChapter];
+  if (!chapter) return;
+
+  ttsEngine.ensureAudioContext();
+
+  if (!ttsEngine.isReady) {
+    showToast('Loading AI voice model...');
+    ttsEngine.onProgress = (progress) => {
+      if (ttsEngine.isDownloading) showTTSLoading(true);
+      updateTTSLoadingProgress(progress);
+    };
+    try {
+      await ttsEngine.initialize(AppState.settings.modelDtype);
+    } catch (e) {
+      showTTSLoading(false);
+      showTTSError(e);
+      return;
+    }
+    showTTSLoading(false);
+    if (!ttsEngine.isReady) return;
+  }
+
+  const text = extractTextFromHtml(chapter.html);
+  const sentences = splitIntoSentences(text);
+  if (sentences.length === 0 || sentenceIndex >= sentences.length) return;
+
+  setupMediaSession();
+  const chapterTitle = chapter.title || `Chapter ${AppState.currentChapter + 1}`;
+  ttsEngine.setMediaSessionMetadata(book.title || 'Untitled Book', chapterTitle, book.coverUrl || null);
+  ttsEngine.setVoice(AppState.settings.ttsVoice);
+  ttsEngine.setSpeed(AppState.settings.ttsSpeed);
+
+  ttsEngine.onSentenceStart = (index, sentence) => {
+    ttsEngine.currentSentenceIndex = index;
+    highlightSentence(sentence);
+    updateTTSBarText(sentence);
+    if (book) {
+      if (!book.ttsSentencePositions) book.ttsSentencePositions = {};
+      book.ttsSentencePositions[AppState.currentChapter] = index;
+      saveBook(book);
+    }
+  };
+
+  ttsEngine.onSentenceEnd = (index) => {};
+
+  ttsEngine.onComplete = () => {
+    clearHighlight();
+    updateTTSBar();
+    if (AppState.currentChapter < book.chapters.length - 1) {
+      nextChapter();
+      setTimeout(() => startTTS(), 500);
+    }
+  };
+
+  ttsEngine.onStateChange = (state) => {
+    updateTTSBar();
+  };
+
+  ttsEngine.ensureAudioContext();
+  const ctx = ttsEngine.audioContext;
+  if (ctx) {
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+      try { await ctx.resume(); } catch (e) { /* */ }
+    }
+    if (ctx.state !== 'running') {
+      try { await ctx.suspend(); await ctx.resume(); } catch (e) { /* */ }
+    }
+  }
+
+  await ttsEngine.playSentences(sentences, sentenceIndex);
+  updateTTSBar();
+}
+
 // ===== EVENT BINDINGS =====
 function bindEvents() {
   // File import
@@ -1259,11 +1427,22 @@ function bindEvents() {
     readerContent.addEventListener('scroll', handleReaderScroll, { passive: true });
   }
 
-  // Tap to toggle reader UI
+  // Tap on reader body: if TTS is active and user taps a word, resume from that word.
+  // Otherwise, toggle the reader UI (header/footer visibility).
   document.getElementById('reader-body')?.addEventListener('click', (e) => {
     if (e.target.tagName === 'A') return;
     // Only toggle if not selecting text
     if (window.getSelection()?.toString()) return;
+    
+    // If TTS is playing or paused, try to find the tapped word and resume from it
+    if ((ttsEngine.isPlaying || ttsEngine.isPaused) && ttsEngine.sentences && ttsEngine.sentences.length > 0) {
+      const tappedWord = getWordAtPoint(e.clientX, e.clientY);
+      if (tappedWord && tappedWord.trim().length > 0) {
+        resumeTTSFromWord(tappedWord);
+        return;
+      }
+    }
+    
     toggleReaderUI();
   });
 
@@ -1272,14 +1451,6 @@ function bindEvents() {
     if (AppState.currentScreen !== 'reader') return;
     
     switch (e.key) {
-      case 'ArrowLeft':
-        e.preventDefault();
-        prevChapter();
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        nextChapter();
-        break;
       case ' ':
         if (ttsEngine.isPlaying || ttsEngine.isPaused) {
           e.preventDefault();
@@ -1298,27 +1469,8 @@ function bindEvents() {
     }
   });
 
-  // Touch swipe for chapter navigation
-  let touchStartX = 0;
-  let touchStartY = 0;
-  const readerEl = document.getElementById('reader-content');
-  
-  if (readerEl) {
-    readerEl.addEventListener('touchstart', (e) => {
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-    }, { passive: true });
-
-    readerEl.addEventListener('touchend', (e) => {
-      const dx = e.changedTouches[0].clientX - touchStartX;
-      const dy = e.changedTouches[0].clientY - touchStartY;
-      
-      if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 2) {
-        if (dx > 0) prevChapter();
-        else nextChapter();
-      }
-    }, { passive: true });
-  }
+  // Swipe/tap-to-change-chapter gestures intentionally removed.
+  // Users navigate chapters using the prev/next buttons in the footer.
 }
 
 // ===== OFFLINE DETECTION =====

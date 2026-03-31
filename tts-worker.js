@@ -1,7 +1,7 @@
 /**
  * OpenShelf TTS Web Worker
  * Runs Kokoro ONNX inference off the main thread so the browser never freezes.
- * Uses tts.stream() for efficient chunked generation of longer text.
+ * Uses tts.generate() with explicit voice for reliable voice selection.
  * Sends raw Float32 PCM samples back — no WAV encoding overhead.
  */
 
@@ -133,42 +133,12 @@ async function handleGenerate({ text, voice }, id) {
   try {
     const v = voice || currentVoice;
 
-    // Use tts.stream() for efficient chunked generation if available.
-    // This lets kokoro-js handle optimal internal text splitting, and we get
-    // audio chunks as they're generated rather than waiting for the full text.
-    if (typeof tts.stream === 'function') {
-      const stream = tts.stream(text, { voice: v });
-      const allSamples = [];
-      let sampleRate = 24000;
-
-      for await (const chunk of stream) {
-        const audio = chunk.audio || chunk;
-        const result = extractSamples(audio);
-        if (result) {
-          allSamples.push(result.samples);
-          sampleRate = result.sampleRate;
-        }
-      }
-
-      if (allSamples.length > 0) {
-        // Concatenate all chunks into a single Float32Array
-        const totalLength = allSamples.reduce((sum, s) => sum + s.length, 0);
-        const merged = new Float32Array(totalLength);
-        let offset = 0;
-        for (const chunk of allSamples) {
-          merged.set(chunk, offset);
-          offset += chunk.length;
-        }
-        const copy = new Float32Array(merged);
-        self.postMessage(
-          { type: 'audio', payload: { samples: copy, sampleRate }, id },
-          [copy.buffer]
-        );
-        return;
-      }
-    }
-
-    // Fallback: use tts.generate() for single-shot generation
+    // Use tts.generate() with explicit voice parameter for reliable voice selection.
+    // tts.stream() can sometimes ignore the voice parameter in certain kokoro-js versions,
+    // causing fallback to a default (robotic) voice. Using generate() ensures the voice
+    // parameter is always respected.
+    // For our batched chunks (~400 chars), generate() is fast enough and guarantees
+    // the correct voice is used every time.
     const audio = await tts.generate(text, { voice: v });
     const result = extractSamples(audio);
 
