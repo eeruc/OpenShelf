@@ -13,9 +13,23 @@
  * - Media Session API provides lock screen controls and book metadata
  */
 
-// Kokoro v1.0 — Heart voice only (highest rated, most natural)
+// Kokoro v1.0 — A-grade voices only (most realistic, natural-sounding)
 export const VOICES = [
+  // American Female
   { id: 'af_heart', name: 'Heart', gender: 'F', accent: 'US', emoji: '💛', grade: 'A', desc: 'Warm, natural' },
+  { id: 'af_bella', name: 'Bella', gender: 'F', accent: 'US', emoji: '🔔', grade: 'A', desc: 'Expressive, clear' },
+  { id: 'af_nicole', name: 'Nicole', gender: 'F', accent: 'US', emoji: '🌙', grade: 'A', desc: 'Soft, gentle' },
+  { id: 'af_sarah', name: 'Sarah', gender: 'F', accent: 'US', emoji: '🌸', grade: 'A', desc: 'Clear, articulate' },
+  { id: 'af_sky', name: 'Sky', gender: 'F', accent: 'US', emoji: '🌤', grade: 'A', desc: 'Bright, cheerful' },
+  // American Male
+  { id: 'am_adam', name: 'Adam', gender: 'M', accent: 'US', emoji: '🎵', grade: 'A', desc: 'Deep, resonant' },
+  { id: 'am_michael', name: 'Michael', gender: 'M', accent: 'US', emoji: '🎙', grade: 'A', desc: 'Smooth, confident' },
+  // British Female
+  { id: 'bf_emma', name: 'Emma', gender: 'F', accent: 'UK', emoji: '🌺', grade: 'A', desc: 'Elegant, refined' },
+  { id: 'bf_isabella', name: 'Isabella', gender: 'F', accent: 'UK', emoji: '🦋', grade: 'A', desc: 'Graceful, poised' },
+  // British Male
+  { id: 'bm_george', name: 'George', gender: 'M', accent: 'UK', emoji: '👑', grade: 'A', desc: 'Authoritative, rich' },
+  { id: 'bm_lewis', name: 'Lewis', gender: 'M', accent: 'UK', emoji: '📖', grade: 'A', desc: 'Warm, storytelling' },
 ];
 
 export const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
@@ -39,6 +53,8 @@ class TTSEngine {
     this._msgId = 0;
     this._pending = new Map();
     this._isDownloading = false;  // true if actually downloading model (not cached)
+    this._sentenceTimers = [];    // timers for per-sentence callbacks within chunks
+    this._skipToChunk = null;     // override chunk index for skip backward
 
     // MediaStream routing for background/lock screen playback
     this._mediaStreamDest = null;
@@ -469,8 +485,17 @@ class TTSEngine {
 
     const chunk = this._chunks[this._currentChunkIdx];
 
-    // Fire sentence-start callback with the chunk text for display
-    this.onSentenceStart?.(chunk.startIdx, chunk.text);
+    // Determine which individual sentences are in this chunk
+    const sentenceIndices = [];
+    for (let i = chunk.startIdx; i <= chunk.endIdx; i++) {
+      sentenceIndices.push(i);
+    }
+
+    // Fire first sentence callback immediately
+    if (sentenceIndices.length > 0) {
+      this.currentSentenceIndex = sentenceIndices[0];
+      this.onSentenceStart?.(sentenceIndices[0], this.sentences[sentenceIndices[0]]);
+    }
 
     if (this.usingNativeFallback) {
       await this._playNative(chunk.text);
@@ -496,6 +521,31 @@ class TTSEngine {
       // Clean up used audio data
       this._audioQueue.delete(this._currentChunkIdx);
 
+      // Set up per-sentence timing callbacks for sentences after the first.
+      // Estimate when each sentence starts based on character-length proportions
+      // within the chunk's total audio duration.
+      if (sentenceIndices.length > 1 && audioData.samples) {
+        const sr = audioData.sampleRate || 24000;
+        const durationSec = audioData.samples.length / sr / this.speed;
+        const totalChars = sentenceIndices.reduce((sum, idx) => sum + this.sentences[idx].length, 0);
+        let charsSoFar = this.sentences[sentenceIndices[0]].length;
+
+        for (let i = 1; i < sentenceIndices.length; i++) {
+          const sentIdx = sentenceIndices[i];
+          const proportion = charsSoFar / totalChars;
+          const delayMs = proportion * durationSec * 1000;
+
+          const timer = setTimeout(() => {
+            if (this.isPlaying && !this._aborted) {
+              this.currentSentenceIndex = sentIdx;
+              this.onSentenceStart?.(sentIdx, this.sentences[sentIdx]);
+            }
+          }, delayMs);
+          this._sentenceTimers.push(timer);
+          charsSoFar += this.sentences[sentIdx].length;
+        }
+      }
+
       if (audioData.samples) {
         await this._playPCM(audioData.samples, audioData.sampleRate);
       } else if (audioData.wav) {
@@ -503,10 +553,20 @@ class TTSEngine {
       }
     }
 
+    // Clear any remaining sentence timers after audio finishes
+    this._clearSentenceTimers();
+
     if (this._aborted || !this.isPlaying) return;
 
     this.onSentenceEnd?.(chunk.endIdx);
-    this._currentChunkIdx++;
+
+    // Handle skip backward override, otherwise advance normally
+    if (this._skipToChunk !== null && this._skipToChunk !== undefined) {
+      this._currentChunkIdx = this._skipToChunk;
+      this._skipToChunk = null;
+    } else {
+      this._currentChunkIdx++;
+    }
 
     // Kick off next batch of pre-generation
     this._pregenQueue();
@@ -660,6 +720,8 @@ class TTSEngine {
     this.isPlaying = false;
     this.isPaused = false;
     this._pending.clear();
+    this._clearSentenceTimers();
+    this._skipToChunk = null;
     // Clear pre-generation queue
     if (this._audioQueue) this._audioQueue.clear();
     if (this._generatingSet) this._generatingSet.clear();
@@ -680,6 +742,7 @@ class TTSEngine {
 
   skipForward() {
     if (!this.isPlaying) return;
+    this._clearSentenceTimers();
     if (this.usingNativeFallback) {
       window.speechSynthesis?.cancel();
     }
@@ -691,15 +754,23 @@ class TTSEngine {
 
   skipBackward() {
     if (!this.isPlaying) return;
-    if (this.currentSentenceIndex > 0) {
-      this.currentSentenceIndex = Math.max(0, this.currentSentenceIndex - 2);
-    }
+    this._clearSentenceTimers();
+    // Set override so _playNextChunk jumps to the previous chunk
+    // instead of advancing after the current audio stops
+    this._skipToChunk = Math.max(0, (this._currentChunkIdx || 0) - 1);
     if (this.usingNativeFallback) {
       window.speechSynthesis?.cancel();
     }
     if (this.currentSource) {
       try { this.currentSource.stop(); } catch (e) { /* */ }
       this.currentSource = null;
+    }
+  }
+
+  _clearSentenceTimers() {
+    if (this._sentenceTimers) {
+      this._sentenceTimers.forEach(t => clearTimeout(t));
+      this._sentenceTimers = [];
     }
   }
 

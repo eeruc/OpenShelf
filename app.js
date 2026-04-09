@@ -692,10 +692,10 @@ function renderSettingsContent() {
     <div class="settings-section">
       <div class="settings-section-title">Text-to-Speech</div>
       
-      <div class="setting-row" style="margin-bottom: var(--space-3);">
+      <div class="setting-row">
         <span class="setting-label">Voice</span>
-        <span class="setting-value">💛 Heart</span>
       </div>
+      ${renderVoiceGroups(s.ttsVoice)}
 
       <div class="setting-row">
         <span class="setting-label">Speed</span>
@@ -949,7 +949,7 @@ async function startTTS() {
   ttsEngine.setMediaSessionMetadata(
     book.title || 'Untitled Book',
     chapterTitle,
-    book.coverUrl || null
+    book.cover || null
   );
 
   // Set up callbacks
@@ -1318,7 +1318,7 @@ async function startTTSFromSentence(sentenceIndex) {
 
   setupMediaSession();
   const chapterTitle = chapter.title || `Chapter ${AppState.currentChapter + 1}`;
-  ttsEngine.setMediaSessionMetadata(book.title || 'Untitled Book', chapterTitle, book.coverUrl || null);
+  ttsEngine.setMediaSessionMetadata(book.title || 'Untitled Book', chapterTitle, book.cover || null);
   ttsEngine.setVoice(AppState.settings.ttsVoice);
   ttsEngine.setSpeed(AppState.settings.ttsSpeed);
 
